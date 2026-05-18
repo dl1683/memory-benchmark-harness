@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import uuid
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -330,7 +331,101 @@ class MapUAdapter:
             "matched_observation_transition": transition,
             "keyword_matched_steps": keyword_steps,
             "event_index": self._event_index(index),
+            "event_ledger": self._event_ledger(index),
         }
+
+    def _event_ledger(self, index: dict[int, dict[str, Any]]) -> dict[str, Any]:
+        action_counts: Counter[str] = Counter()
+        action_steps: defaultdict[str, list[int]] = defaultdict(list)
+        file_accesses: defaultdict[str, list[int]] = defaultdict(list)
+        url_accesses: defaultdict[str, list[int]] = defaultdict(list)
+        inventory_changes: list[dict[str, Any]] = []
+
+        for step in sorted(index):
+            record = index[step]
+            action_text = "" if record.get("action") is None else str(record.get("action"))
+            observation_text = (
+                "" if record.get("observation") is None else str(record.get("observation"))
+            )
+            combined_text = f"{action_text}\n{observation_text}"
+            action_name = self._action_name(action_text) or "unknown"
+            action_counts[action_name] += 1
+            action_steps[action_name].append(step)
+
+            for path in self._file_refs_from_text(action_text):
+                file_accesses[path].append(step)
+            for url in self._urls_from_text(combined_text):
+                url_accesses[url].append(step)
+
+            change = self._inventory_change_from_action(step, action_text)
+            if change is not None:
+                inventory_changes.append(change)
+
+        return {
+            "action_counts": dict(action_counts),
+            "action_steps": dict(action_steps),
+            "file_accesses": dict(file_accesses),
+            "url_accesses": dict(url_accesses),
+            "inventory_changes": inventory_changes,
+        }
+
+    def _file_refs_from_text(self, text: str) -> list[str]:
+        refs: list[str] = []
+        seen = set()
+        patterns = [
+            r'"(?:file_path|path|filename|source|target)"\s*:\s*"([^"]+)"',
+            r"'(?:file_path|path|filename|source|target)'\s*:\s*'([^']+)'",
+            (
+                r"(?:(?:[A-Za-z]:)?[/\\][\w .@%+=,~:/\\-]+\."
+                r"(?:csv|json|sql|py|js|ts|tsx|jsx|md|txt|html|css|yaml|yml|toml|ini|cfg))"
+            ),
+            (
+                r"\b[\w.@%+=,~/-]+\."
+                r"(?:csv|json|sql|py|js|ts|tsx|jsx|md|txt|html|css|yaml|yml|toml|ini|cfg)\b"
+            ),
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                value = match.group(1) if match.lastindex else match.group(0)
+                value = value.strip().strip("'\"`.,;:()[]{}")
+                if not value or value in seen:
+                    continue
+                seen.add(value)
+                refs.append(value)
+                if len(refs) >= 50:
+                    return refs
+        return refs
+
+    def _inventory_change_from_action(
+        self,
+        step: int,
+        action: str,
+    ) -> dict[str, Any] | None:
+        cleaned = " ".join(action.strip().split())
+        if not cleaned:
+            return None
+        patterns = [
+            ("added", r"\b(?:take|get|pick up|grab)\s+(.+?)(?:\s+from\b|$)"),
+            (
+                "removed",
+                r"\b(?:drop|put|place|insert|move)\s+(.+?)"
+                r"(?:\s+(?:in|into|on|onto|at|to)\b|$)",
+            ),
+        ]
+        for direction, pattern in patterns:
+            match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+            if match is None:
+                continue
+            item = match.group(1).strip().strip("'\"`.,;:")
+            if not item:
+                continue
+            return {
+                "step": step,
+                "direction": direction,
+                "item": item,
+                "action": cleaned,
+            }
+        return None
 
     def _event_index(
         self,

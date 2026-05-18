@@ -128,6 +128,34 @@ Next architecture target:
 
 Build a general high-recall retrieval/rerank layer inspired by top memory systems: hybrid lexical + dense retrieval, source-preserving episode windows only after rerank, and explicit temporal/causal/objective links. Do not add benchmark-specific prompt or scenario rules.
 
+## Post-leaderboard general memory improvements
+
+The first post-leaderboard improvement targets the lowest-scoring capability
+shape without benchmark-specific answer tables: temporal/action ledgers.
+
+Implemented generic ledger primitives:
+
+- Action frequency and action-step timelines.
+- Entity-scoped direct-object action histories.
+- File/URL access summaries.
+- Inventory additions/removals from transfer actions.
+- Structural prompt normalization from MapU `structured_next_steps` target
+  questions, so the ledger can consume the memory system's own normalized
+  operation target instead of relying only on raw prompt wording.
+
+Validation slice:
+
+- `uv run memorybench run --benchmarks ama_bench --adapter mapu --mapu-base-url http://127.0.0.1:8000 --mapu-run-id event_ledger_gemini_judged_smoke_20260518 --solver gemini --solver-model gemini-3.1-flash-lite --solver-max-tokens 512 --judge gemini --judge-model gemini-3.1-flash-lite --judge-max-tokens 256 --offset 30 --limit 1 --max-turns-per-scenario 12 --concurrency 1 --out results\event_ledger_gemini_judged_smoke_20260518.json`
+- Result: 11 / 12 semantic correct, 0 errors, 91.67% semantic accuracy on one
+  Embodied AI episode.
+- The remaining miss is a general state-transition issue: container interaction
+  summaries should distinguish actions mentioning an entity from actions that
+  changed that entity's state.
+
+This is not a new official score. It is evidence that the next architecture
+direction should be a provenance-backed state ledger with entity state-change
+semantics, not more benchmark prompt branches.
+
 ## Reranked event subset experiment
 
 Tried a generic LLM-context reranker that passed only nearby referenced steps, small referenced ranges, transition windows, and top lexical event matches to the solver while preserving the full event index for structural operators.

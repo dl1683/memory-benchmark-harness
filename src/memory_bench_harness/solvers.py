@@ -515,72 +515,124 @@ def _structural_memory_answer(
     request: AdapterRequest,
     memory_response: AdapterResponse,
 ) -> str | None:
-    prompt = request.turn.prompt
+    prompts = _structural_prompt_candidates(request.turn.prompt, memory_response)
     events = _events_from_memory_response(memory_response)
     if not events:
-        return _action_availability_answer(prompt)
+        for prompt in prompts:
+            answer = _action_availability_answer(prompt)
+            if answer is not None:
+                return answer
+        return None
 
-    answer = _action_availability_answer(prompt)
-    if answer is not None:
-        return answer
+    for prompt in prompts:
+        answer = _action_availability_answer(prompt)
+        if answer is not None:
+            return answer
 
-    answer = _action_range_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _action_range_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _direct_reversal_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _action_frequency_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _two_step_net_effect_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _entity_action_timeline_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _observation_cycle_similarity_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _inventory_change_timeline_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _state_reversion_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _resource_access_summary_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _counterfactual_relative_position_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _direct_reversal_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _co_location_vanish_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _two_step_net_effect_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _blocked_attempt_reposition_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _observation_cycle_similarity_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _net_zero_sequence_answer(prompt)
-    if answer is not None:
-        return answer
+        answer = _state_reversion_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _oscillation_strategy_inference_answer(prompt)
-    if answer is not None:
-        return answer
+        answer = _counterfactual_relative_position_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _loop_breaking_action_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _co_location_vanish_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _transition_action_answer(prompt, memory_response, events)
-    if answer is not None:
-        return answer
+        answer = _blocked_attempt_reposition_answer(prompt, events)
+        if answer is not None:
+            return answer
 
-    answer = _direct_event_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _net_zero_sequence_answer(prompt)
+        if answer is not None:
+            return answer
 
-    answer = _first_mention_answer(prompt, events)
-    if answer is not None:
-        return answer
+        answer = _oscillation_strategy_inference_answer(prompt)
+        if answer is not None:
+            return answer
+
+        answer = _loop_breaking_action_answer(prompt, events)
+        if answer is not None:
+            return answer
+
+        answer = _transition_action_answer(prompt, memory_response, events)
+        if answer is not None:
+            return answer
+
+        answer = _direct_event_answer(prompt, events)
+        if answer is not None:
+            return answer
+
+        answer = _first_mention_answer(prompt, events)
+        if answer is not None:
+            return answer
 
     return None
+
+
+def _structural_prompt_candidates(
+    prompt: str,
+    memory_response: AdapterResponse,
+) -> list[str]:
+    candidates = [prompt]
+    retrieved = memory_response.retrieved_context
+    if not isinstance(retrieved, dict):
+        return candidates
+    query = retrieved.get("query")
+    if not isinstance(query, dict):
+        return candidates
+    for action in query.get("structured_next_steps") or []:
+        if not isinstance(action, dict):
+            continue
+        target = action.get("target")
+        if not isinstance(target, dict):
+            continue
+        question = target.get("question")
+        if isinstance(question, str) and question.strip():
+            candidates.append(question.strip())
+    deduped: list[str] = []
+    seen = set()
+    for candidate in candidates:
+        key = " ".join(candidate.lower().split())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped[:3]
 
 
 def _action_availability_answer(prompt: str) -> str | None:
@@ -622,6 +674,194 @@ def _action_range_answer(prompt: str, events: list[dict[str, Any]]) -> str | Non
     if not selected:
         return None
     return _format_action_sequence(selected)
+
+
+def _action_frequency_answer(prompt: str, events: list[dict[str, Any]]) -> str | None:
+    prompt_l = prompt.lower()
+    asks_frequency = any(
+        phrase in prompt_l
+        for phrase in (
+            "action frequency",
+            "frequency of actions",
+            "action frequencies",
+            "actions frequency",
+            "how frequently",
+            "how often",
+            "types of actions",
+            "action types",
+        )
+    )
+    asks_count = "how many times" in prompt_l and any(
+        word in prompt_l for word in ("action", "agent", "tool", "command")
+    )
+    if not asks_frequency and not asks_count:
+        return None
+
+    selected = _events_until_prompt_bound(prompt, events)
+    if not selected:
+        return None
+
+    counts: dict[str, list[int]] = {}
+    for event in selected:
+        name = _event_action_name(event)
+        if not name:
+            continue
+        counts.setdefault(name, []).append(int(event.get("step") or 0))
+    if not counts:
+        return None
+
+    if asks_count:
+        target = _target_action_from_count_question(prompt)
+        if target:
+            steps = counts.get(target)
+            if steps is None:
+                for action_name, action_steps in counts.items():
+                    if action_name.lower() == target.lower():
+                        steps = action_steps
+                        target = action_name
+                        break
+            if steps is not None:
+                return (
+                    f"{target} occurred {len(steps)} times "
+                    f"(steps {_format_step_list(steps)})."
+                )
+
+    parts = [
+        f"{name} ({len(steps)} times; steps {_format_step_list(steps)})"
+        for name, steps in sorted(counts.items(), key=lambda item: (-len(item[1]), item[0]))
+    ]
+    return "Action frequency: " + "; ".join(parts)
+
+
+def _entity_action_timeline_answer(
+    prompt: str,
+    events: list[dict[str, Any]],
+) -> str | None:
+    prompt_l = prompt.lower()
+    if not any(
+        phrase in prompt_l
+        for phrase in (
+            "actions performed on",
+            "actions were performed on",
+            "actions performed with",
+            "actions were performed with",
+            "actions performed to",
+            "actions were performed to",
+            "interacted with",
+            "interactions with",
+        )
+    ):
+        return None
+    target = _target_entity_from_action_timeline_question(prompt)
+    if not target:
+        return None
+    selected = []
+    target_l = target.lower()
+    for event in _events_until_prompt_bound(prompt, events):
+        action = str(event.get("action") or "")
+        if _action_direct_object_matches(action, target_l):
+            selected.append(event)
+    if not selected:
+        return None
+    parts = [
+        f"step {event.get('step')}: {_format_event_action(event)}"
+        for event in selected
+    ]
+    return f"Actions performed on {target}: " + "; ".join(parts) + "."
+
+
+def _inventory_change_timeline_answer(
+    prompt: str,
+    events: list[dict[str, Any]],
+) -> str | None:
+    prompt_l = prompt.lower()
+    if "inventory" not in prompt_l:
+        return None
+    if not any(word in prompt_l for word in ("change", "changed", "timeline", "history")):
+        return None
+
+    changes = []
+    for event in _events_until_prompt_bound(prompt, events):
+        action = str(event.get("action") or "")
+        change = _inventory_change_from_action(int(event.get("step") or 0), action)
+        if change is not None:
+            changes.append(change)
+    if not changes:
+        return None
+
+    parts = ["Initially empty."]
+    for change in changes:
+        verb = "added" if change["direction"] == "added" else "removed"
+        parts.append(f"At step {change['step']}, {change['item']} was {verb}.")
+    return "Inventory changed as follows: " + " ".join(parts)
+
+
+def _resource_access_summary_answer(
+    prompt: str,
+    events: list[dict[str, Any]],
+) -> str | None:
+    prompt_l = prompt.lower()
+    if not any(
+        phrase in prompt_l
+        for phrase in (
+            "accessed files",
+            "file access",
+            "files accessed",
+            "schema files",
+            "which files",
+            "what files",
+            "action types",
+        )
+    ):
+        return None
+    if not any(
+        word in prompt_l
+        for word in ("count", "breakdown", "frequency", "how many", "total", "steps")
+    ):
+        return None
+
+    selected = _events_until_prompt_bound(prompt, events)
+    if not selected:
+        return None
+
+    file_steps: dict[str, list[int]] = {}
+    action_steps: dict[str, list[int]] = {}
+    for event in selected:
+        step = int(event.get("step") or 0)
+        action = str(event.get("action") or "")
+        action_name = _event_action_name(event)
+        if action_name:
+            action_steps.setdefault(action_name, []).append(step)
+        for ref in _file_refs_from_text(action):
+            file_steps.setdefault(_display_file_ref(ref), []).append(step)
+
+    if not file_steps and "file" in prompt_l:
+        return None
+
+    parts = []
+    if file_steps:
+        file_parts = [
+            f"{path}: {len(steps)} times (steps {_format_step_list(steps)})"
+            for path, steps in sorted(
+                file_steps.items(),
+                key=lambda item: (item[0].lower(), item[1]),
+            )
+        ]
+        parts.append(
+            f"Total objects: {len(file_steps)} files. Breakdown: ["
+            + "; ".join(file_parts)
+            + "]."
+        )
+    if action_steps and ("action type" in prompt_l or "action types" in prompt_l):
+        action_parts = [
+            f"{name}: {len(steps)} times (steps {_format_step_list(steps)})"
+            for name, steps in sorted(
+                action_steps.items(),
+                key=lambda item: (-len(item[1]), item[0]),
+            )
+        ]
+        parts.append("Action types: [" + "; ".join(action_parts) + "].")
+    return " ".join(parts) if parts else None
 
 
 def _state_reversion_answer(prompt: str, events: list[dict[str, Any]]) -> str | None:
@@ -1508,6 +1748,182 @@ def _format_action_sequence(events: list[dict[str, Any]]) -> str:
     )
 
 
+def _events_until_prompt_bound(
+    prompt: str,
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    bound = _prompt_step_bound(prompt)
+    if bound is None:
+        return events
+    step, inclusive = bound
+    return [
+        event
+        for event in events
+        if (
+            int(event.get("step") or -1) <= step
+            if inclusive
+            else int(event.get("step") or -1) < step
+        )
+    ]
+
+
+def _prompt_step_bound(prompt: str) -> tuple[int, bool] | None:
+    before = re.search(
+        r"\b(?:before|prior to|until before)\s+(?:step|turn)\s+(\d+)\b",
+        prompt,
+        flags=re.IGNORECASE,
+    )
+    if before is not None:
+        return int(before.group(1)), False
+    until = re.search(
+        r"\b(?:until|up to|through|by)\s+(?:step|turn)\s+(\d+)\b",
+        prompt,
+        flags=re.IGNORECASE,
+    )
+    if until is not None:
+        return int(until.group(1)), True
+    return None
+
+
+def _target_action_from_count_question(prompt: str) -> str | None:
+    patterns = [
+        r"\bhow many times did (?:the )?(?:agent|system|assistant)?\s*`?([A-Za-z_][\w.-]*)`?",
+        r"\bhow many times was `?([A-Za-z_][\w.-]*)`?",
+        r"\bcount(?: the)? `?([A-Za-z_][\w.-]*)`? actions?",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, prompt, flags=re.IGNORECASE)
+        if match is not None:
+            candidate = match.group(1).strip()
+            if candidate.lower() not in {"the", "agent", "system", "assistant"}:
+                return candidate
+    quoted = re.findall(r"`([A-Za-z_][\w.-]*)`", prompt)
+    return quoted[0] if quoted else None
+
+
+def _target_entity_from_action_timeline_question(prompt: str) -> str | None:
+    patterns = [
+        r"\bactions performed (?:on|with|to)\s+([^?.;,]+)",
+        r"\bactions were performed (?:on|with|to)\s+([^?.;,]+)",
+        r"\binteractions with\s+([^?.;,]+)",
+        r"\binteracted with\s+([^?.;,]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, prompt, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        target = match.group(1).strip().strip("'\"` ")
+        target = re.sub(
+            r"\s+(?:before|prior to|until|through|by)\s+(?:step|turn)\s+\d+.*$",
+            "",
+            target,
+            flags=re.IGNORECASE,
+        ).strip()
+        target = re.sub(
+            r"\s+and\s+(?:at\s+)?which\s+steps?.*$",
+            "",
+            target,
+            flags=re.IGNORECASE,
+        ).strip()
+        if target:
+            return target
+    quoted = re.findall(r"`([^`]{2,80})`", prompt)
+    return quoted[0].strip() if quoted else None
+
+
+def _action_direct_object_matches(action: str, target_l: str) -> bool:
+    action_l = " ".join(action.lower().split())
+    if not action_l or target_l not in action_l:
+        return False
+    if action_l.startswith(f"go to {target_l}"):
+        return False
+    if re.search(rf"\b(?:to|from|in|into|on|onto|at)\s+{re.escape(target_l)}\b", action_l):
+        return False
+    match = re.match(r"^[a-z_][\w.-]*\s+(.+)$", action_l)
+    if match is None:
+        return False
+    direct_object = re.split(
+        r"\s+\b(?:to|from|in|into|on|onto|at|with|using)\b\s+",
+        match.group(1),
+        maxsplit=1,
+    )[0].strip()
+    return direct_object == target_l or direct_object.startswith(f"{target_l} ")
+
+
+def _format_step_list(steps: list[int]) -> str:
+    unique = sorted(dict.fromkeys(int(step) for step in steps))
+    if len(unique) <= 16:
+        return ",".join(str(step) for step in unique)
+    head = ",".join(str(step) for step in unique[:12])
+    return f"{head},...,+{len(unique) - 12} more"
+
+
+def _inventory_change_from_action(
+    step: int,
+    action: str,
+) -> dict[str, Any] | None:
+    cleaned = " ".join(action.strip().split())
+    if not cleaned:
+        return None
+    patterns = [
+        ("added", r"\b(?:take|get|pick up|grab)\s+(.+?)(?:\s+from\b|$)"),
+        (
+            "removed",
+            r"\b(?:drop|put|place|insert|move)\s+(.+?)"
+            r"(?:\s+(?:in|into|on|onto|at|to)\b|$)",
+        ),
+    ]
+    for direction, pattern in patterns:
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        item = match.group(1).strip().strip("'\"`.,;:")
+        if not item:
+            continue
+        return {
+            "step": step,
+            "direction": direction,
+            "item": item,
+            "action": cleaned,
+        }
+    return None
+
+
+def _file_refs_from_text(text: str) -> list[str]:
+    refs: list[str] = []
+    seen = set()
+    patterns = [
+        r'"(?:file_path|path|filename|source|target)"\s*:\s*"([^"]+)"',
+        r"'(?:file_path|path|filename|source|target)'\s*:\s*'([^']+)'",
+        (
+            r"(?:(?:[A-Za-z]:)?[/\\][\w .@%+=,~:/\\-]+\."
+            r"(?:csv|json|sql|py|js|ts|tsx|jsx|md|txt|html|css|yaml|yml|toml|ini|cfg))"
+        ),
+        (
+            r"\b[\w.@%+=,~/-]+\."
+            r"(?:csv|json|sql|py|js|ts|tsx|jsx|md|txt|html|css|yaml|yml|toml|ini|cfg)\b"
+        ),
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            value = match.group(1) if match.lastindex else match.group(0)
+            value = value.strip().strip("'\"`.,;:()[]{}")
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            refs.append(value)
+            if len(refs) >= 50:
+                return refs
+    return refs
+
+
+def _display_file_ref(path: str) -> str:
+    cleaned = path.replace("\\", "/").rstrip("/")
+    if "/" not in cleaned:
+        return cleaned
+    return cleaned.rsplit("/", 1)[-1] or cleaned
+
+
 def _format_event_action(event: dict[str, Any]) -> str:
     action = event.get("action")
     if action is not None:
@@ -1708,6 +2124,7 @@ def _compact_memory_response(
         "structured_hits": [],
         "mentioned_step_facts": [],
         "event_index": [],
+        "event_ledger": {},
         "derived_event_relations": [],
         "matched_transition": None,
     }
@@ -1722,6 +2139,8 @@ def _compact_memory_response(
         if isinstance(sidecar.get("event_index"), list):
             compact["event_index"] = sidecar["event_index"]
             compact["derived_event_relations"] = _derived_event_relations(sidecar["event_index"])
+        if isinstance(sidecar.get("event_ledger"), dict):
+            compact["event_ledger"] = sidecar["event_ledger"]
         compact["matched_transition"] = sidecar.get("matched_observation_transition")
 
     query = retrieved.get("query")
