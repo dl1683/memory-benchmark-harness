@@ -61,6 +61,20 @@ def _parse_args() -> argparse.Namespace:
     )
     leaderboard.add_argument("--top", type=int, default=10)
 
+    amb_manifest_cmd = subparsers.add_parser(
+        "amb-manifest",
+        help="Fetch the live Agent Memory Benchmark result manifest.",
+    )
+    amb_manifest_cmd.add_argument("--dataset", default="", help="Optional dataset filter.")
+    amb_manifest_cmd.add_argument("--split", default="", help="Optional split/domain filter.")
+    amb_manifest_cmd.add_argument("--top", type=int, default=10)
+    amb_manifest_cmd.add_argument(
+        "--compare-score",
+        type=float,
+        default=None,
+        help="Optional accuracy to rank against the filtered manifest, as 0.65 or 65.",
+    )
+
     run = subparsers.add_parser("run", help="Run benchmarks against one adapter.")
     run.add_argument("--benchmarks", nargs="+", required=True, choices=sorted(LOADERS))
     run.add_argument("--adapter", choices=["null", "oracle", "mapu"], default="null")
@@ -285,6 +299,10 @@ def _write_jsonl(path: str, rows: list[dict[str, Any]]) -> None:
 AMA_LEADERBOARD_BASE = "https://huggingface.co/spaces/AMA-bench/AMA-bench-Leaderboard/raw/main/data"
 AMA_DOMAIN_ORDER = ["TEXT2SQL", "SOFTWARE", "WEB", "GAME", "EMBODIED_AI", "OPENWORLD_QA"]
 AMA_CAP_ORDER = ["A", "B", "C", "D"]
+AMB_RESULTS_MANIFEST_URL = (
+    "https://raw.githubusercontent.com/vectorize-io/agent-memory-benchmark/"
+    "main/results-manifest.json"
+)
 
 
 def _ama_score_macro_average(score: dict[str, Any]) -> float:
@@ -368,6 +386,72 @@ def ama_leaderboard(kind: str, compare_score: float | None, top: int) -> int:
                 ),
             }
         payload["leaderboards"][current_kind] = board
+    print(json.dumps(payload, indent=2, ensure_ascii=True))
+    return 0
+
+
+def amb_manifest(
+    dataset: str,
+    split: str,
+    top: int,
+    compare_score: float | None,
+) -> int:
+    with urllib.request.urlopen(AMB_RESULTS_MANIFEST_URL, timeout=20) as response:
+        rows = json.loads(response.read().decode("utf-8"))
+    if not isinstance(rows, list):
+        raise ValueError("AMB results manifest did not decode to a list.")
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if dataset and str(row.get("dataset", "")).lower() != dataset.lower():
+            continue
+        if split and str(row.get("split", "")).lower() != split.lower():
+            continue
+        filtered.append(row)
+
+    filtered.sort(key=lambda item: float(item.get("accuracy") or 0.0), reverse=True)
+    normalized_compare = None
+    if compare_score is not None:
+        normalized_compare = compare_score / 100 if compare_score > 1 else compare_score
+
+    payload: dict[str, Any] = {
+        "status": "ok",
+        "source": AMB_RESULTS_MANIFEST_URL,
+        "dataset_filter": dataset or None,
+        "split_filter": split or None,
+        "entry_count": len(filtered),
+        "top": [
+            {
+                "rank": rank,
+                "dataset": row.get("dataset"),
+                "split": row.get("split"),
+                "run_name": row.get("run_name"),
+                "memory": row.get("memory"),
+                "mode": row.get("mode"),
+                "accuracy": row.get("accuracy"),
+                "total_queries": row.get("total_queries"),
+                "avg_retrieve_time_ms": row.get("avg_retrieve_time_ms"),
+                "avg_context_tokens": row.get("avg_context_tokens"),
+                "ingestion_time_ms": row.get("ingestion_time_ms"),
+            }
+            for rank, row in enumerate(filtered[: max(top, 0)], 1)
+        ],
+    }
+    if normalized_compare is not None:
+        better_count = sum(
+            1 for row in filtered if float(row.get("accuracy") or 0.0) > normalized_compare
+        )
+        payload["comparison"] = {
+            "score": normalized_compare,
+            "would_rank": better_count + 1,
+            "leader_score": float(filtered[0].get("accuracy") or 0.0) if filtered else None,
+            "clears_current_leader": (
+                bool(filtered)
+                and normalized_compare >= float(filtered[0].get("accuracy") or 0.0)
+            ),
+        }
     print(json.dumps(payload, indent=2, ensure_ascii=True))
     return 0
 
@@ -606,6 +690,8 @@ def main() -> int:
         return export(ns.benchmark, ns.out, ns.limit, ns.offset)
     if ns.command == "ama-leaderboard":
         return ama_leaderboard(ns.kind, ns.compare_score, ns.top)
+    if ns.command == "amb-manifest":
+        return amb_manifest(ns.dataset, ns.split, ns.top, ns.compare_score)
     if ns.command == "ama-submission":
         return ama_submission(
             ns.report,

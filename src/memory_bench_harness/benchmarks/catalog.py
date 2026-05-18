@@ -57,5 +57,14 @@ EXTERNAL_BENCHMARKS: dict[str, BenchmarkInfo] = {
         source="https://github.com/snap-research/locomo",
         notes="Long-conversation memory benchmark; useful as a recall baseline.",
     ),
+    "amb": BenchmarkInfo(
+        name="amb",
+        status="tracked_external_manifest",
+        source="https://github.com/vectorize-io/agent-memory-benchmark",
+        notes=(
+            "Agent Memory Benchmark tracks accuracy plus ingestion/retrieval "
+            "latency and context tokens across BEAM, LifeBench, LoCoMo, "
+            "LongMemEval, MemBench, MemSim, and PersonaMem."
+        ),
+    ),
 }
-
