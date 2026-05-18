@@ -529,7 +529,14 @@ def _int_or_none(value: Any) -> int | None:
 def _structural_memory_answer(
     request: AdapterRequest,
     memory_response: AdapterResponse,
-) -> str | None:
+) -> Any | None:
+    inherited_state = _structured_state_inheritance_answer(
+        request.turn.prompt,
+        memory_response,
+    )
+    if inherited_state is not None:
+        return inherited_state
+
     prompts = _structural_prompt_candidates(request.turn.prompt, memory_response)
     events = _events_from_memory_response(memory_response)
     if not events:
@@ -2175,6 +2182,168 @@ def _answer_shape_hint(
         "If the answer is a state object/list, return the complete updated "
         "state in that same structure, not only the inherited or changed field."
     )
+
+
+def _structured_state_inheritance_answer(
+    prompt: str,
+    memory_response: AdapterResponse,
+) -> Any | None:
+    prompt_l = prompt.lower()
+    if not any(
+        phrase in prompt_l
+        for phrase in (
+            "same as",
+            "same place as",
+            "same one as",
+            "like to join",
+            "want to join",
+            "i'm joining",
+            "i am joining",
+            "join them",
+            "join ",
+            "inherit",
+            "use the same",
+            "keep the same",
+        )
+    ):
+        return None
+
+    sidecar = _sidecar(memory_response)
+    feedback = sidecar.get("environment_feedback")
+    if not isinstance(feedback, list):
+        return None
+    observed: Any | None = None
+    for item in reversed(feedback):
+        if not isinstance(item, dict):
+            continue
+        candidate = item.get("observed_outcome")
+        if isinstance(candidate, (dict, list)) and candidate:
+            observed = candidate
+            break
+    if observed is None:
+        return None
+
+    patched = _patch_base_state_from_inherited_fields(prompt, observed, sidecar)
+    if patched is not None:
+        return patched
+    return observed
+
+
+def _patch_base_state_from_inherited_fields(
+    prompt: str,
+    observed: Any,
+    sidecar: dict[str, Any],
+) -> Any | None:
+    if not isinstance(observed, list) or not observed:
+        return None
+    observed_records = [item for item in observed if isinstance(item, dict)]
+    if not observed_records:
+        return None
+
+    typed_seed = sidecar.get("typed_seed_index")
+    if not isinstance(typed_seed, dict):
+        return None
+    seed_records_raw = typed_seed.get("records")
+    if not isinstance(seed_records_raw, list):
+        return None
+
+    observed_keys = set().union(*(record.keys() for record in observed_records))
+    seed_records: list[dict[str, Any]] = []
+    for record in seed_records_raw:
+        if not isinstance(record, dict):
+            continue
+        fields = record.get("fields")
+        if not isinstance(fields, dict):
+            continue
+        overlap = observed_keys & set(fields.keys())
+        if len(overlap) < max(2, min(4, len(observed_keys) // 2)):
+            continue
+        seed_records.append(record)
+    if len(seed_records) < len(observed_records):
+        return None
+
+    seed_records.sort(key=lambda record: _record_path_index(str(record.get("path", ""))))
+    base_state = [
+        {
+            str(key): _coerce_record_value(value)
+            for key, value in dict(record.get("fields", {})).items()
+        }
+        for record in seed_records[: len(observed_records)]
+    ]
+    target_fields = _mentioned_record_fields(prompt, observed_keys)
+    target_ordinals = _mentioned_day_ordinals(prompt)
+    if not target_fields or not target_ordinals:
+        return None
+
+    observed_by_day = {
+        _coerce_day_number(record.get("days")): record
+        for record in observed_records
+        if _coerce_day_number(record.get("days")) is not None
+    }
+    changed = False
+    for row in base_state:
+        day = _coerce_day_number(row.get("days"))
+        if day not in target_ordinals:
+            continue
+        source = observed_by_day.get(day)
+        if source is None:
+            continue
+        for field in target_fields:
+            if field in source:
+                row[field] = source[field]
+                changed = True
+    return base_state if changed else None
+
+
+def _record_path_index(path: str) -> int:
+    matches = re.findall(r"\[(\d+)\]", path)
+    return int(matches[-1]) if matches else 0
+
+
+def _coerce_record_value(value: Any) -> Any:
+    if isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
+        return int(value.strip())
+    return value
+
+
+def _coerce_day_number(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _mentioned_record_fields(prompt: str, fields: set[str]) -> list[str]:
+    prompt_l = prompt.lower().replace("_", " ")
+    matched: list[str] = []
+    for field in sorted(fields):
+        field_l = field.lower().replace("_", " ")
+        if field_l and re.search(rf"\b{re.escape(field_l)}\b", prompt_l):
+            matched.append(field)
+    return matched
+
+
+def _mentioned_day_ordinals(prompt: str) -> set[int]:
+    prompt_l = prompt.lower()
+    ordinals = {
+        "first": 1,
+        "second": 2,
+        "third": 3,
+        "fourth": 4,
+        "fifth": 5,
+        "sixth": 6,
+        "seventh": 7,
+    }
+    days: set[int] = set()
+    for word, number in ordinals.items():
+        if re.search(rf"\b{word}\s+day\b|\bday,\s*{word}\b", prompt_l):
+            days.add(number)
+    for match in re.finditer(r"\bday\s+(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+day\b", prompt_l):
+        value = match.group(1) or match.group(2)
+        if value:
+            days.add(int(value))
+    return days
 
 
 def _compact_memory_response(
