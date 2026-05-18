@@ -181,6 +181,18 @@ Evidence:
   guidance.
 - `results\memoryarena_answer_shape_group_travel_smoke_20260518.json`: 1 / 2
   semantic, 0 errors after adding a structure-derived answer-shape hint.
+- `results\memoryarena_state_inheritance_group_travel_smoke_20260518.json`:
+  1 / 2 semantic, 0 errors after adding a generic same-as/join structured
+  state inheritance operator. This returned the prior observed state directly
+  and revealed that field-level patching is required.
+- `results\memoryarena_field_patch_group_travel_smoke_20260518.json`: 1 / 2
+  semantic, 1 / 2 exact, 0 errors after replacing whole-state copying with a
+  generic field-level merge: start from typed seed state and copy only the
+  referenced inherited field/day from prior observed structured outcomes.
+- `results\memoryarena_field_patch_group_travel_limit2_20260518.json`: 2 / 6
+  semantic, 1 / 6 exact, 0 errors on two three-turn group-travel scenarios.
+  The remaining misses require selecting new restaurants/accommodations from
+  catalog constraints that are not present in the static Hugging Face rows.
 - `results\ama_typed_index_regression_smoke_20260518.json`: 3 / 3 semantic,
   0 errors on an AMA regression smoke, confirming the typed index did not break
   sampled trajectory memory behavior.
@@ -210,6 +222,11 @@ Current diagnosis:
 - The solver now receives `typed_seed_facts`, `typed_seed_records`,
   `typed_environment_facts`, and `typed_environment_records`, plus a generic
   answer-shape hint for same-as/join/update requests over structured memory.
+- The structural solver now has a generic state-inheritance merge for loop
+  feedback: when a prompt asks to join/use the same field, it reconstructs the
+  base structured state from seed records and patches only the referenced
+  field/day from the latest observed structured outcome. This is useful for
+  any stateful planning memory, not just travel tasks.
 
 Next safe direction:
 
