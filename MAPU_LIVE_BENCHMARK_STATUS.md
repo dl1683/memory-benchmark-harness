@@ -173,12 +173,27 @@ Evidence:
   0 errors after promoting environment feedback into typed sidecar records.
 - A rule-based compatibility selector was tried and rejected because it
   regressed the same slice to 3 / 30.
+- `results\memoryarena_typed_index_group_travel_smoke_20260518.json`: 1 / 2
+  semantic, 0 errors on one `group_travel_planner` two-turn smoke after adding
+  the generic typed semantic memory index.
+- `results\memoryarena_typed_index_shape_group_travel_smoke_20260518.json`:
+  1 / 2 semantic, 0 errors after adding explicit full-state answer-shape
+  guidance.
+- `results\memoryarena_answer_shape_group_travel_smoke_20260518.json`: 1 / 2
+  semantic, 0 errors after adding a structure-derived answer-shape hint.
+- `results\ama_typed_index_regression_smoke_20260518.json`: 3 / 3 semantic,
+  0 errors on an AMA regression smoke, confirming the typed index did not break
+  sampled trajectory memory behavior.
 
 Current diagnosis:
 
 - `bundled_shopping` rows contain only `questions`, `answers`, and `category`;
   they do not expose price/rating/product-catalog fields needed for fully
   deterministic highest-price/highest-rating choices.
+- The official MemoryArena project frames the task as a multi-session
+  Memory-Agent-Environment loop. The simplified harness only loads Hugging Face
+  rows as static prompts, so shopping/progressive-search slices are not yet an
+  official-equivalent interactive evaluation.
 - The run is therefore bottlenecked by option-selection and latent product
   priors, not by basic memory transport alone.
 - The harness now has an explicit `--observe-environment-feedback` switch for
@@ -186,11 +201,22 @@ Current diagnosis:
   by default and should stay off for AMA-Bench official runs.
 - Environment feedback sidecars are snapshotted immutably so report rows do not
   show future feedback that was unavailable at answer time.
+- The harness now supports `--memoryarena-configs`, allowing each MemoryArena
+  family to be tested independently without brittle global offset arithmetic.
+- The MapU adapter now builds a generic typed semantic memory index from seed
+  context and observed feedback. It flattens arbitrary nested records into
+  path/value facts and table-like records, then relevance-filters them by the
+  current prompt.
+- The solver now receives `typed_seed_facts`, `typed_seed_records`,
+  `typed_environment_facts`, and `typed_environment_records`, plus a generic
+  answer-shape hint for same-as/join/update requests over structured memory.
 
 Next safe direction:
 
-Build a general option/state solver that uses explicit catalog observations or
-post-action environment feedback when available. Do not add product-specific or
+Build the official-equivalent MemoryArena loop before treating MemoryArena
+scores as comparable: product/search/travel environments must expose explicit
+catalog observations or post-action feedback. Then build a general option/state
+solver over those observations. Do not add product-specific or
 MemoryArena-answer-specific rules.
 
 ## Reranked event subset experiment
