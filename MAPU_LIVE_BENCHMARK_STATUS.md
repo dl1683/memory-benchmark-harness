@@ -85,6 +85,10 @@ Validation:
   exact and semantic with 0 errors after adding compact memory-document
   summaries. The summary lane is useful architecture, but it is not yet a
   measured score improvement.
+- `results\amb_personamem_mapu_limit3_generic_metadata_20260518.json` scored
+  2 / 3 exact and semantic with 0 errors after exposing generic `topic`,
+  `question_type`, and `retrieval_query` metadata aliases and instructing the
+  solver to treat them as non-answer task context.
 
 Implementation notes:
 
@@ -101,6 +105,10 @@ Implementation notes:
 - Runtime AMB turn metadata no longer includes `amb_gold_ids`; those are
   evaluation-side provenance targets and should not be visible to adapters or
   solvers.
+- Runtime AMB turn metadata includes generic non-answer context aliases
+  (`topic`, `question_type`, `retrieval_query`) in addition to AMB-prefixed
+  fields, making the interface easier for small solvers to use without
+  benchmark-specific parsing.
 - The MapU adapter now extracts compact memory-document summaries from system
   persona blocks and preference/goal sentences. These summaries are passed as
   stable profile/preference evidence to the solver while keeping full source
