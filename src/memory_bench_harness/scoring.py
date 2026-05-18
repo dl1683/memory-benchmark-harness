@@ -12,7 +12,19 @@ def normalize_answer(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":")).lower()
 
 
+def normalize_mcq_label(value: Any) -> str:
+    normalized = normalize_answer(value)
+    if len(normalized) == 3 and normalized[0] == "(" and normalized[2] == ")":
+        return normalized[1]
+    return normalized
+
+
 def exact_match(prediction: Any, expected: Any) -> bool:
+    if isinstance(expected, list) and all(
+        isinstance(item, str | int | float | bool) or item is None for item in expected
+    ):
+        prediction_norm = normalize_mcq_label(prediction)
+        return any(prediction_norm == normalize_mcq_label(item) for item in expected)
     return normalize_answer(prediction) == normalize_answer(expected)
 
 

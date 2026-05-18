@@ -537,6 +537,11 @@ def _structural_memory_answer(
     if inherited_state is not None:
         return inherited_state
 
+    if os.environ.get("MEMORYBENCH_ENABLE_MCQ_SELECTOR") == "1":
+        mcq_answer = _mcq_option_memory_answer(request.turn.prompt, memory_response)
+        if mcq_answer is not None:
+            return mcq_answer
+
     prompts = _structural_prompt_candidates(request.turn.prompt, memory_response)
     events = _events_from_memory_response(memory_response)
     if not events:
@@ -2344,6 +2349,124 @@ def _mentioned_day_ordinals(prompt: str) -> set[int]:
         if value:
             days.add(int(value))
     return days
+
+
+def _mcq_option_memory_answer(prompt: str, memory_response: AdapterResponse) -> str | None:
+    options = _parse_mcq_options(prompt)
+    if len(options) < 2:
+        return None
+    evidence_text = _retrieved_memory_text(memory_response)
+    if not evidence_text.strip():
+        return None
+    evidence_counts: dict[str, int] = {}
+    for token in _content_tokens(evidence_text):
+        evidence_counts[token] = evidence_counts.get(token, 0) + 1
+    if not evidence_counts:
+        return None
+
+    scored: list[tuple[float, str]] = []
+    for label, text in options.items():
+        tokens = _content_tokens(text)
+        if not tokens:
+            continue
+        overlap_score = sum(min(evidence_counts.get(token, 0), 8) for token in tokens)
+        support_count = sum(1 for token in tokens if token in evidence_counts)
+        unsupported_count = len(tokens) - support_count
+        score = overlap_score + (1.5 * support_count) - (0.2 * unsupported_count)
+        scored.append((score, label))
+    if len(scored) < 2:
+        return None
+    scored.sort(reverse=True)
+    best_score, best_label = scored[0]
+    second_score = scored[1][0]
+    if best_score < 8 or best_score - second_score < 1.5:
+        return None
+    return f"({best_label})"
+
+
+def _parse_mcq_options(prompt: str) -> dict[str, str]:
+    matches = list(
+        re.finditer(
+            r"\(([a-z])\)\s*(.*?)(?=\n\s*\([a-z]\)\s*|\Z)",
+            prompt,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    )
+    options: dict[str, str] = {}
+    for match in matches:
+        label = match.group(1).lower()
+        text = " ".join(match.group(2).strip().split())
+        if label and text:
+            options[label] = text
+    return options
+
+
+def _retrieved_memory_text(memory_response: AdapterResponse) -> str:
+    retrieved = memory_response.retrieved_context
+    if not isinstance(retrieved, dict):
+        return ""
+    texts: list[str] = []
+    query = retrieved.get("query")
+    if isinstance(query, dict):
+        for hit in query.get("chunk_hits") or []:
+            if isinstance(hit, dict) and hit.get("text"):
+                texts.append(str(hit["text"]))
+        for hit in query.get("hits") or []:
+            if isinstance(hit, dict) and hit.get("normalized_text"):
+                texts.append(str(hit["normalized_text"]))
+    sidecar = retrieved.get("sidecar")
+    if isinstance(sidecar, dict):
+        for key in ("typed_seed_index", "typed_environment_index"):
+            typed = sidecar.get(key)
+            if not isinstance(typed, dict):
+                continue
+            for fact in typed.get("facts") or []:
+                if isinstance(fact, dict):
+                    texts.append(str(fact.get("value") or ""))
+            for record in typed.get("records") or []:
+                if isinstance(record, dict) and isinstance(record.get("fields"), dict):
+                    texts.extend(str(value) for value in record["fields"].values())
+    return "\n".join(texts)
+
+
+def _content_tokens(text: str) -> set[str]:
+    stopwords = {
+        "about",
+        "also",
+        "and",
+        "any",
+        "are",
+        "back",
+        "been",
+        "being",
+        "can",
+        "could",
+        "for",
+        "from",
+        "have",
+        "how",
+        "into",
+        "like",
+        "must",
+        "not",
+        "that",
+        "the",
+        "their",
+        "there",
+        "this",
+        "through",
+        "was",
+        "what",
+        "where",
+        "which",
+        "while",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+    tokens = set(re.findall(r"[a-z][a-z0-9_-]{2,}", text.lower()))
+    return {token for token in tokens if token not in stopwords}
 
 
 def _compact_memory_response(

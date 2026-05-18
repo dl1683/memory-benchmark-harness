@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from memory_bench_harness.benchmarks.ama_bench import load_ama_bench
+from memory_bench_harness.benchmarks.amb import load_amb_personamem_32k
 from memory_bench_harness.benchmarks.memoryarena import load_memoryarena
 from memory_bench_harness.scoring import exact_match, summarize_results
 from memory_bench_harness.types import (
@@ -23,6 +24,7 @@ from memory_bench_harness.types import (
 LOADERS = {
     "memoryarena": load_memoryarena,
     "ama_bench": load_ama_bench,
+    "amb_personamem_32k": load_amb_personamem_32k,
 }
 
 

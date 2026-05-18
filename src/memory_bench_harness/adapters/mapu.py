@@ -118,8 +118,10 @@ class MapUAdapter:
         scenario_id: str,
         seed_context: Any,
     ) -> None:
+        memory_documents = self._memory_documents_from_seed(seed_context)
+        compact_seed_context = self._compact_seed_context(seed_context)
         self._typed_seed_index_by_key[scenario_key] = self._typed_memory_index(
-            seed_context,
+            compact_seed_context,
             source="seed_context",
             max_facts=800,
             max_records=160,
@@ -136,7 +138,36 @@ class MapUAdapter:
                     trajectory=trajectory,
                 )
 
-        rendered = json.dumps(seed_context, ensure_ascii=True, sort_keys=True, indent=2)
+        for document in memory_documents:
+            content = str(document.get("content") or "")
+            if not content.strip():
+                continue
+            doc_id = str(document.get("id") or hashlib.sha256(content.encode()).hexdigest()[:16])
+            metadata = (
+                document.get("metadata")
+                if isinstance(document.get("metadata"), dict)
+                else {}
+            )
+            header = {
+                "suite": benchmark,
+                "config": config or "default",
+                "case_id": scenario_id,
+                "document_id": doc_id,
+                "metadata": metadata,
+            }
+            await self._ingest_document(
+                corpus_id=corpus_id,
+                content=(
+                    "# Memory source document\n\n"
+                    f"{json.dumps(header, ensure_ascii=True, sort_keys=True)}\n\n"
+                    f"{content}"
+                ),
+                source_uri=f"{self._source_prefix(scenario_key)}/document/{doc_id}",
+                document_type="memory_source_document",
+                independence_group=scenario_key,
+            )
+
+        rendered = json.dumps(compact_seed_context, ensure_ascii=True, sort_keys=True, indent=2)
         truncated = False
         if len(rendered) > self.max_seed_chars:
             rendered = rendered[: self.max_seed_chars]
@@ -157,6 +188,38 @@ class MapUAdapter:
             document_type="memory_seed_context",
             independence_group=scenario_key,
         )
+
+    def _memory_documents_from_seed(self, seed_context: Any) -> list[dict[str, Any]]:
+        if not isinstance(seed_context, dict):
+            return []
+        raw_documents = seed_context.get("memory_documents")
+        if not isinstance(raw_documents, list):
+            return []
+        documents: list[dict[str, Any]] = []
+        for item in raw_documents:
+            if not isinstance(item, dict):
+                continue
+            documents.append(dict(item))
+        return documents
+
+    def _compact_seed_context(self, seed_context: Any) -> Any:
+        if not isinstance(seed_context, dict) or "memory_documents" not in seed_context:
+            return seed_context
+        compact = dict(seed_context)
+        documents = self._memory_documents_from_seed(seed_context)
+        compact["memory_documents"] = [
+            {
+                "id": document.get("id"),
+                "metadata": (
+                    document.get("metadata")
+                    if isinstance(document.get("metadata"), dict)
+                    else {}
+                ),
+                "content_chars": len(str(document.get("content") or "")),
+            }
+            for document in documents
+        ]
+        return compact
 
     def _store_trajectory_step_index(self, scenario_key: str, trajectory: list[Any]) -> None:
         index: dict[int, dict[str, Any]] = {}

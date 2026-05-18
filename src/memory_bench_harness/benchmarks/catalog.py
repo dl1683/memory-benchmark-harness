@@ -29,6 +29,16 @@ BENCHMARKS: dict[str, BenchmarkInfo] = {
         source="https://huggingface.co/datasets/AMA-bench/AMA-bench",
         notes="Long-horizon trajectory-memory QA; official scoring uses LLM-as-judge.",
     ),
+    "amb_personamem_32k": BenchmarkInfo(
+        name="amb_personamem_32k",
+        status="runnable",
+        source="https://github.com/vectorize-io/agent-memory-benchmark",
+        notes=(
+            "Agent Memory Benchmark PersonaMem 32k split. Uses static documents "
+            "plus MCQ-style queries; tracks accuracy and runtime through the "
+            "standard harness report."
+        ),
+    ),
 }
 
 
