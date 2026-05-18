@@ -11,6 +11,7 @@ from typing import Any
 
 from memory_bench_harness.adapters import CommandAdapter, NullAdapter, OracleAdapter
 from memory_bench_harness.benchmarks.catalog import BENCHMARKS, EXTERNAL_BENCHMARKS
+from memory_bench_harness.benchmarks.memoryarena import CONFIGS as MEMORYARENA_CONFIGS
 from memory_bench_harness.runner import LOADERS, run_benchmarks, write_report
 from memory_bench_harness.solvers import (
     CommandSolver,
@@ -67,6 +68,13 @@ def _parse_args() -> argparse.Namespace:
     run.add_argument("--allow-oracle", action="store_true")
     run.add_argument("--limit", type=int, default=0)
     run.add_argument("--offset", type=int, default=0)
+    run.add_argument(
+        "--memoryarena-configs",
+        nargs="+",
+        choices=MEMORYARENA_CONFIGS,
+        default=None,
+        help="Optional MemoryArena config subset to run without global offset arithmetic.",
+    )
     run.add_argument("--max-turns-per-scenario", type=int, default=0)
     run.add_argument("--concurrency", type=int, default=8)
     run.add_argument("--out", default="results/run.json")
@@ -619,6 +627,7 @@ def main() -> int:
                 concurrency=ns.concurrency,
                 allow_oracle=ns.allow_oracle,
                 judge=judge,
+                memoryarena_configs=ns.memoryarena_configs,
             )
         )
         write_report(ns.out, report)

@@ -58,10 +58,18 @@ def _row_to_scenario(config: str, row: dict[str, Any]) -> Scenario:
     )
 
 
-def load_memoryarena(limit: int = 0, offset: int = 0) -> list[Scenario]:
+def load_memoryarena(
+    limit: int = 0,
+    offset: int = 0,
+    configs: list[str] | None = None,
+) -> list[Scenario]:
+    selected_configs = tuple(configs or CONFIGS)
+    unknown = sorted(set(selected_configs) - set(CONFIGS))
+    if unknown:
+        raise ValueError(f"Unsupported MemoryArena configs: {', '.join(unknown)}")
     scenarios: list[Scenario] = []
     seen = 0
-    for config in CONFIGS:
+    for config in selected_configs:
         dataset = _load_dataset(config)
         for row in dataset:
             if seen < offset:

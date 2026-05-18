@@ -26,12 +26,26 @@ LOADERS = {
 }
 
 
-def load_scenarios(benchmarks: list[str], limit: int = 0, offset: int = 0) -> list[Scenario]:
+def load_scenarios(
+    benchmarks: list[str],
+    limit: int = 0,
+    offset: int = 0,
+    memoryarena_configs: list[str] | None = None,
+) -> list[Scenario]:
     scenarios: list[Scenario] = []
     for benchmark in benchmarks:
         if benchmark not in LOADERS:
             raise ValueError(f"Unsupported runnable benchmark: {benchmark}")
-        scenarios.extend(LOADERS[benchmark](limit=limit, offset=offset))
+        if benchmark == "memoryarena":
+            scenarios.extend(
+                load_memoryarena(
+                    limit=limit,
+                    offset=offset,
+                    configs=memoryarena_configs,
+                )
+            )
+        else:
+            scenarios.extend(LOADERS[benchmark](limit=limit, offset=offset))
     return scenarios
 
 
@@ -159,8 +173,14 @@ async def run_benchmarks(
     concurrency: int = 8,
     allow_oracle: bool = False,
     judge: Judge | None = None,
+    memoryarena_configs: list[str] | None = None,
 ) -> dict[str, Any]:
-    scenarios = load_scenarios(benchmarks, limit=limit, offset=offset)
+    scenarios = load_scenarios(
+        benchmarks,
+        limit=limit,
+        offset=offset,
+        memoryarena_configs=memoryarena_configs,
+    )
     semaphore = asyncio.Semaphore(max(concurrency, 1))
     tasks = [
         _run_scenario(
