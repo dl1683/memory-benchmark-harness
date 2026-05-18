@@ -77,6 +77,14 @@ Validation:
   scored 1 / 1 exact and semantic with 0 errors.
 - `uv run memorybench run --benchmarks amb_personamem_32k --adapter mapu --solver gemini --solver-model gemini-3.1-flash-lite --judge gemini --judge-model gemini-3.1-flash-lite --limit 3 --max-turns-per-scenario 3 --concurrency 1 --out results\amb_personamem_mapu_limit3_default_restored_20260518.json`
   scored 1 / 3 exact and semantic with 0 errors on a three-query smoke.
+- `results\amb_personamem_mapu_limit3_mcguided_20260518.json` scored 2 / 3
+  exact and semantic with 0 errors after strengthening the generic MCQ
+  instruction and removing `amb_gold_ids` from runtime metadata. This is the
+  best current small-slice AMB evidence, but it is still a smoke slice.
+- `results\amb_personamem_mapu_limit3_docsummary_20260518.json` scored 1 / 3
+  exact and semantic with 0 errors after adding compact memory-document
+  summaries. The summary lane is useful architecture, but it is not yet a
+  measured score improvement.
 
 Implementation notes:
 
@@ -90,6 +98,13 @@ Implementation notes:
   into one JSON seed.
 - MCQ exact scoring now treats aliases like `c` and `(c)` as equivalent when
   expected answers are scalar alias lists.
+- Runtime AMB turn metadata no longer includes `amb_gold_ids`; those are
+  evaluation-side provenance targets and should not be visible to adapters or
+  solvers.
+- The MapU adapter now extracts compact memory-document summaries from system
+  persona blocks and preference/goal sentences. These summaries are passed as
+  stable profile/preference evidence to the solver while keeping full source
+  documents in MapU.
 - A lexical MCQ selector was tried and gated behind
   `MEMORYBENCH_ENABLE_MCQ_SELECTOR=1` because it fixed one AMB option-selection
   miss but regressed two others. It is not default.
