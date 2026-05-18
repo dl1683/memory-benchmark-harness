@@ -47,6 +47,7 @@ class MapUAdapter:
         self._seed_written: set[str] = set()
         self._trajectory_steps_by_key: dict[str, dict[int, dict[str, Any]]] = {}
         self._environment_feedback_by_key: dict[str, list[dict[str, Any]]] = {}
+        self._typed_seed_index_by_key: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -117,6 +118,12 @@ class MapUAdapter:
         scenario_id: str,
         seed_context: Any,
     ) -> None:
+        self._typed_seed_index_by_key[scenario_key] = self._typed_memory_index(
+            seed_context,
+            source="seed_context",
+            max_facts=800,
+            max_records=160,
+        )
         if isinstance(seed_context, dict):
             trajectory = seed_context.get("trajectory")
             if isinstance(trajectory, list):
@@ -345,7 +352,158 @@ class MapUAdapter:
                 dict(item)
                 for item in self._environment_feedback_by_key.get(scenario_key, [])
             ],
+            "typed_seed_index": self._relevant_typed_index(
+                self._typed_seed_index_by_key.get(
+                    scenario_key,
+                    {"facts": [], "records": []},
+                ),
+                prompt,
+                fact_limit=160,
+                record_limit=60,
+            ),
+            "typed_environment_index": self._relevant_typed_index(
+                self._typed_memory_index(
+                    self._environment_feedback_by_key.get(scenario_key, []),
+                    source="environment_feedback",
+                    max_facts=320,
+                    max_records=80,
+                ),
+                prompt,
+                fact_limit=120,
+                record_limit=40,
+            ),
         }
+
+    def _typed_memory_index(
+        self,
+        value: Any,
+        *,
+        source: str,
+        max_facts: int,
+        max_records: int,
+    ) -> dict[str, list[dict[str, Any]]]:
+        facts: list[dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
+
+        def scalar_text(item: Any) -> str | None:
+            if item is None:
+                return None
+            if isinstance(item, bool):
+                return "true" if item else "false"
+            if isinstance(item, (int, float, str)):
+                text = str(item).strip()
+                return text[:2000] if text else None
+            return None
+
+        def add_record(path: str, item: dict[str, Any]) -> None:
+            if len(records) >= max_records:
+                return
+            fields: dict[str, str] = {}
+            for key, raw in item.items():
+                text = scalar_text(raw)
+                if text is not None:
+                    fields[str(key)] = text
+            if len(fields) < 2:
+                return
+            records.append(
+                {
+                    "path": path,
+                    "source": source,
+                    "fields": fields,
+                }
+            )
+
+        def walk(item: Any, path: str) -> None:
+            if len(facts) >= max_facts and len(records) >= max_records:
+                return
+            text = scalar_text(item)
+            if text is not None:
+                if len(facts) < max_facts:
+                    facts.append(
+                        {
+                            "path": path,
+                            "value": text,
+                            "source": source,
+                            "value_type": type(item).__name__,
+                        }
+                    )
+                return
+            if isinstance(item, dict):
+                add_record(path, item)
+                for key, child in item.items():
+                    child_key = str(key).replace(".", "_")
+                    walk(child, f"{path}.{child_key}" if path else child_key)
+                return
+            if isinstance(item, list):
+                for idx, child in enumerate(item):
+                    walk(child, f"{path}[{idx}]")
+
+        walk(value, source)
+        return {"facts": facts, "records": records}
+
+    def _relevant_typed_index(
+        self,
+        index: dict[str, list[dict[str, Any]]],
+        prompt: str,
+        *,
+        fact_limit: int,
+        record_limit: int,
+    ) -> dict[str, list[dict[str, Any]]]:
+        prompt_tokens = self._typed_index_tokens(prompt)
+        if not prompt_tokens:
+            return {
+                "facts": list(index.get("facts", []))[: min(fact_limit, 40)],
+                "records": list(index.get("records", []))[: min(record_limit, 20)],
+            }
+
+        def score_text(text: str) -> int:
+            tokens = self._typed_index_tokens(text)
+            return len(prompt_tokens & tokens)
+
+        scored_facts: list[tuple[int, int, dict[str, Any]]] = []
+        for idx, fact in enumerate(index.get("facts", [])):
+            haystack = f"{fact.get('path', '')} {fact.get('value', '')}"
+            score = score_text(haystack)
+            if score:
+                scored_facts.append((score, -idx, fact))
+
+        scored_records: list[tuple[int, int, dict[str, Any]]] = []
+        for idx, record in enumerate(index.get("records", [])):
+            fields = record.get("fields", {})
+            field_text = " ".join(
+                f"{key} {value}" for key, value in fields.items()
+            ) if isinstance(fields, dict) else ""
+            score = score_text(f"{record.get('path', '')} {field_text}")
+            if score:
+                scored_records.append((score, -idx, record))
+
+        scored_facts.sort(reverse=True)
+        scored_records.sort(reverse=True)
+        return {
+            "facts": [fact for _score, _idx, fact in scored_facts[:fact_limit]],
+            "records": [
+                record for _score, _idx, record in scored_records[:record_limit]
+            ],
+        }
+
+    def _typed_index_tokens(self, text: str) -> set[str]:
+        tokens = set(re.findall(r"[a-z0-9_.$/-]+", text.lower()))
+        expanded: set[str] = set()
+        ordinal = {
+            "first": "1",
+            "second": "2",
+            "third": "3",
+            "fourth": "4",
+            "fifth": "5",
+            "sixth": "6",
+            "seventh": "7",
+        }
+        for token in tokens:
+            if len(token) > 1:
+                expanded.add(token)
+            if token in ordinal:
+                expanded.add(ordinal[token])
+        return expanded
 
     def _event_ledger(self, index: dict[int, dict[str, Any]]) -> dict[str, Any]:
         action_counts: Counter[str] = Counter()

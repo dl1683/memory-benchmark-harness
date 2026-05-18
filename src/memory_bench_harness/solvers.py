@@ -185,7 +185,15 @@ class OpenAICompatibleSolver:
                         "id, command, or quoted terms match the question. For causal "
                         "or strategy questions, ground the explanation in the specific "
                         "steps and observations rather than answering from general "
-                        "domain knowledge. Return the final selected answer/value, "
+                        "domain knowledge. When typed fact or record indexes are "
+                        "present, use them as the primary source for slot values, "
+                        "schedules, constraints, profile facts, inherited state, and "
+                        "current-state reconstruction. When the context contains a "
+                        "structured base state and the question asks for a change, "
+                        "join, inherited preference, continuation, or same-as relation, "
+                        "return the complete updated state in the same structure when "
+                        "that is the natural answer shape; do not return only the "
+                        "changed scalar. Return the final selected answer/value, "
                         "not intermediate tool syntax such as search[...] or click[...] "
                         "unless the question explicitly asks for the exact action, tool "
                         "call, or command. Return strict JSON with one key "
@@ -2129,6 +2137,10 @@ def _compact_memory_response(
         "event_index": [],
         "event_ledger": {},
         "environment_feedback": [],
+        "typed_seed_facts": [],
+        "typed_seed_records": [],
+        "typed_environment_facts": [],
+        "typed_environment_records": [],
         "derived_event_relations": [],
         "matched_transition": None,
     }
@@ -2147,6 +2159,22 @@ def _compact_memory_response(
             compact["event_ledger"] = sidecar["event_ledger"]
         if isinstance(sidecar.get("environment_feedback"), list):
             compact["environment_feedback"] = sidecar["environment_feedback"][-12:]
+        typed_seed = sidecar.get("typed_seed_index")
+        if isinstance(typed_seed, dict):
+            facts = typed_seed.get("facts")
+            records = typed_seed.get("records")
+            if isinstance(facts, list):
+                compact["typed_seed_facts"] = facts
+            if isinstance(records, list):
+                compact["typed_seed_records"] = records
+        typed_environment = sidecar.get("typed_environment_index")
+        if isinstance(typed_environment, dict):
+            facts = typed_environment.get("facts")
+            records = typed_environment.get("records")
+            if isinstance(facts, list):
+                compact["typed_environment_facts"] = facts
+            if isinstance(records, list):
+                compact["typed_environment_records"] = records
         compact["matched_transition"] = sidecar.get("matched_observation_transition")
 
     query = retrieved.get("query")
