@@ -51,7 +51,6 @@ def load_amb_personamem_32k(limit: int = 0, offset: int = 0) -> list[Scenario]:
                 metadata={
                     "amb_query_id": row.get("id"),
                     "amb_user_id": row.get("user_id"),
-                    "amb_gold_ids": row.get("gold_ids") or [],
                     "amb_question_type": meta.get("question_type"),
                     "amb_topic": meta.get("topic"),
                     "amb_retrieval_query": meta.get("retrieval_query"),

@@ -192,7 +192,10 @@ class OpenAICompatibleSolver:
                         "domain knowledge. When typed fact or record indexes are "
                         "present, use them as the primary source for slot values, "
                         "schedules, constraints, profile facts, inherited state, and "
-                        "current-state reconstruction. When the context contains a "
+                        "current-state reconstruction. When memory document summaries "
+                        "are present, use them as compact stable profile/preference "
+                        "evidence and weigh them above generic option plausibility. "
+                        "When the context contains a "
                         "structured base state and the question asks for a change, "
                         "join, inherited preference, continuation, or same-as relation, "
                         "return the complete updated state in the same structure when "
@@ -2132,7 +2135,19 @@ def _event_search_text(event: dict[str, Any]) -> str:
 def _response_instruction(prompt: str) -> str:
     prompt_l = prompt.lower()
     if "multiple choice" in prompt_l or "mcq" in prompt_l:
-        return "Return only the selected option label or option text."
+        return (
+            "Return only the selected option label. Choose the option whose "
+            "factual or preference claims are best supported by retrieved "
+            "memory evidence. Penalize options that are merely plausible, "
+            "generic, or contradict the user's remembered preferences."
+        )
+    if _parse_mcq_options(prompt):
+        return (
+            "Return only the selected option label. Choose the option whose "
+            "factual or preference claims are best supported by retrieved "
+            "memory evidence. Penalize options that are merely plausible, "
+            "generic, or contradict the user's remembered preferences."
+        )
     if "yes or no" in prompt_l or re.search(r"\bcan .*\?", prompt_l):
         return "Return a concise yes/no answer when the evidence supports one."
     if "json" in prompt_l:
@@ -2358,28 +2373,49 @@ def _mcq_option_memory_answer(prompt: str, memory_response: AdapterResponse) -> 
     evidence_text = _retrieved_memory_text(memory_response)
     if not evidence_text.strip():
         return None
-    evidence_counts: dict[str, int] = {}
-    for token in _content_tokens(evidence_text):
-        evidence_counts[token] = evidence_counts.get(token, 0) + 1
-    if not evidence_counts:
+    evidence_tokens = _content_tokens(evidence_text)
+    prompt_tokens = _content_tokens(_prompt_without_mcq_options(prompt))
+    if not evidence_tokens:
         return None
 
+    option_claims = {
+        label: _option_claim_text(text)
+        for label, text in options.items()
+    }
+    option_tokens = {
+        label: _content_tokens(claim)
+        for label, claim in option_claims.items()
+    }
+    token_df: dict[str, int] = {}
+    for tokens in option_tokens.values():
+        for token in tokens:
+            token_df[token] = token_df.get(token, 0) + 1
+
     scored: list[tuple[float, str]] = []
-    for label, text in options.items():
-        tokens = _content_tokens(text)
+    evidence_l = " ".join(evidence_text.lower().split())
+    for label, claim in option_claims.items():
+        tokens = option_tokens[label]
         if not tokens:
             continue
-        overlap_score = sum(min(evidence_counts.get(token, 0), 8) for token in tokens)
-        support_count = sum(1 for token in tokens if token in evidence_counts)
+        support_count = sum(1 for token in tokens if token in evidence_tokens)
+        evidence_score = 0.0
+        for token in tokens:
+            if token not in evidence_tokens:
+                continue
+            df = max(token_df.get(token, 1), 1)
+            evidence_score += 0.5 + (len(options) / df)
+        prompt_score = 0.35 * sum(1 for token in tokens if token in prompt_tokens)
+        phrase_score = _option_phrase_support(claim, evidence_l)
         unsupported_count = len(tokens) - support_count
-        score = overlap_score + (1.5 * support_count) - (0.2 * unsupported_count)
+        score = evidence_score + prompt_score + phrase_score - (0.1 * unsupported_count)
+        score -= _option_contradiction_penalty(claim, evidence_text)
         scored.append((score, label))
     if len(scored) < 2:
         return None
     scored.sort(reverse=True)
     best_score, best_label = scored[0]
     second_score = scored[1][0]
-    if best_score < 8 or best_score - second_score < 1.5:
+    if best_score < 8 or best_score - second_score < 3:
         return None
     return f"({best_label})"
 
@@ -2399,6 +2435,58 @@ def _parse_mcq_options(prompt: str) -> dict[str, str]:
         if label and text:
             options[label] = text
     return options
+
+
+def _prompt_without_mcq_options(prompt: str) -> str:
+    match = re.search(r"\n\s*\([a-z]\)\s*", prompt, flags=re.IGNORECASE)
+    return prompt[: match.start()] if match else prompt
+
+
+def _option_claim_text(text: str) -> str:
+    text = " ".join(text.strip().split())
+    markers = (
+        "since ",
+        "because ",
+        "given ",
+        "as you ",
+        "consider ",
+        "how about ",
+        "why not ",
+        "you might ",
+    )
+    text_l = text.lower()
+    starts = [text_l.find(marker) for marker in markers if text_l.find(marker) >= 0]
+    if starts:
+        start = min(starts)
+        return text[start:]
+    return text
+
+
+def _option_phrase_support(claim: str, evidence_l: str) -> float:
+    tokens = _ordered_content_tokens(claim)
+    score = 0.0
+    for size, weight in ((3, 4.0), (2, 2.0)):
+        for idx in range(0, max(len(tokens) - size + 1, 0)):
+            phrase = " ".join(tokens[idx: idx + size])
+            if phrase in evidence_l:
+                score += weight
+    return min(score, 18.0)
+
+
+def _option_contradiction_penalty(claim: str, evidence_text: str) -> float:
+    claim_l = claim.lower()
+    evidence_l = evidence_text.lower()
+    negative = any(
+        cue in claim_l
+        for cue in ("dislike", "hate", "avoid", "not interested", "don't like")
+    )
+    positive = any(
+        cue in evidence_l
+        for cue in ("like", "love", "passion", "enjoy", "interested", "favorite")
+    )
+    if negative and positive and (_content_tokens(claim) & _content_tokens(evidence_text)):
+        return 10.0
+    return 0.0
 
 
 def _retrieved_memory_text(memory_response: AdapterResponse) -> str:
@@ -2469,6 +2557,46 @@ def _content_tokens(text: str) -> set[str]:
     return {token for token in tokens if token not in stopwords}
 
 
+def _ordered_content_tokens(text: str) -> list[str]:
+    stopwords = {
+        "about",
+        "also",
+        "and",
+        "any",
+        "are",
+        "back",
+        "been",
+        "being",
+        "can",
+        "could",
+        "for",
+        "from",
+        "have",
+        "how",
+        "into",
+        "like",
+        "must",
+        "not",
+        "that",
+        "the",
+        "their",
+        "there",
+        "this",
+        "through",
+        "was",
+        "what",
+        "where",
+        "which",
+        "while",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+    tokens = re.findall(r"[a-z][a-z0-9_-]{2,}", text.lower())
+    return [token for token in tokens if token not in stopwords]
+
+
 def _compact_memory_response(
     request: AdapterRequest,
     memory_response: AdapterResponse,
@@ -2486,6 +2614,7 @@ def _compact_memory_response(
         "typed_seed_records": [],
         "typed_environment_facts": [],
         "typed_environment_records": [],
+        "memory_document_summaries": [],
         "derived_event_relations": [],
         "matched_transition": None,
     }
@@ -2520,6 +2649,9 @@ def _compact_memory_response(
                 compact["typed_environment_facts"] = facts
             if isinstance(records, list):
                 compact["typed_environment_records"] = records
+        summaries = sidecar.get("memory_document_summaries")
+        if isinstance(summaries, list):
+            compact["memory_document_summaries"] = summaries[:24]
         compact["matched_transition"] = sidecar.get("matched_observation_transition")
 
     query = retrieved.get("query")

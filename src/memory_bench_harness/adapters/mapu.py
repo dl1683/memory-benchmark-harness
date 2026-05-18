@@ -48,6 +48,7 @@ class MapUAdapter:
         self._trajectory_steps_by_key: dict[str, dict[int, dict[str, Any]]] = {}
         self._environment_feedback_by_key: dict[str, list[dict[str, Any]]] = {}
         self._typed_seed_index_by_key: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        self._memory_document_summaries_by_key: dict[str, list[dict[str, Any]]] = {}
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -120,6 +121,9 @@ class MapUAdapter:
     ) -> None:
         memory_documents = self._memory_documents_from_seed(seed_context)
         compact_seed_context = self._compact_seed_context(seed_context)
+        self._memory_document_summaries_by_key[scenario_key] = (
+            self._memory_document_summaries(memory_documents)
+        )
         self._typed_seed_index_by_key[scenario_key] = self._typed_memory_index(
             compact_seed_context,
             source="seed_context",
@@ -435,7 +439,78 @@ class MapUAdapter:
                 fact_limit=120,
                 record_limit=40,
             ),
+            "memory_document_summaries": self._relevant_memory_document_summaries(
+                self._memory_document_summaries_by_key.get(scenario_key, []),
+                prompt,
+                limit=24,
+            ),
         }
+
+    def _memory_document_summaries(
+        self,
+        documents: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        summaries: list[dict[str, Any]] = []
+        for document in documents:
+            content = str(document.get("content") or "")
+            if not content.strip():
+                continue
+            summary = self._extract_profile_summary(content)
+            if not summary:
+                summary = content[:1200]
+            summaries.append(
+                {
+                    "id": str(document.get("id") or ""),
+                    "metadata": (
+                        document.get("metadata")
+                        if isinstance(document.get("metadata"), dict)
+                        else {}
+                    ),
+                    "summary": summary[:2400],
+                }
+            )
+        return summaries
+
+    def _extract_profile_summary(self, content: str) -> str:
+        excerpts: list[str] = []
+        system_match = re.search(
+            r"\[SYSTEM\](.*?)(?=\n\s*\[(?:USER|ASSISTANT|SYSTEM)\]|\Z)",
+            content,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if system_match is not None:
+            excerpts.append(" ".join(system_match.group(1).split())[:1400])
+
+        preference_patterns = (
+            r"[^.\n]{0,120}\b(?:passion|goal|love|loves|like|likes|enjoy|enjoys|"
+            r"prefer|prefers|interested|favorite|dislike|hates)\b[^.\n]{0,180}[.]?"
+        )
+        for match in re.finditer(preference_patterns, content, flags=re.IGNORECASE):
+            excerpt = " ".join(match.group(0).split())
+            if excerpt and excerpt not in excerpts:
+                excerpts.append(excerpt)
+            if len(excerpts) >= 8:
+                break
+        return "\n".join(excerpts)
+
+    def _relevant_memory_document_summaries(
+        self,
+        summaries: list[dict[str, Any]],
+        prompt: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        prompt_tokens = self._typed_index_tokens(prompt)
+        if not prompt_tokens:
+            return summaries[:limit]
+        scored: list[tuple[int, int, dict[str, Any]]] = []
+        for idx, summary in enumerate(summaries):
+            text = f"{summary.get('summary', '')} {summary.get('metadata', '')}"
+            score = len(prompt_tokens & self._typed_index_tokens(text))
+            if score:
+                scored.append((score, -idx, summary))
+        scored.sort(reverse=True)
+        return [summary for _score, _idx, summary in scored[:limit]]
 
     def _typed_memory_index(
         self,
