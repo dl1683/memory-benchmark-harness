@@ -57,9 +57,10 @@ Official leaderboard caveat:
 
 ## Agent Memory Benchmark tracking
 
-AMB is not yet runnable through the MapU adapter, but its live result manifest
-is now tracked so we can compare both accuracy and efficiency targets before
-attempting provider integration.
+AMB is now partially runnable through the standard harness via
+`amb_personamem_32k`. The live result manifest is also tracked so we can compare
+both accuracy and efficiency targets before attempting full provider
+integration.
 
 Validation:
 
@@ -70,14 +71,37 @@ Validation:
   500 queries, 700.0 ms average retrieval, 43,624.5 average context tokens.
 - A 0.90 score would rank second on that filtered manifest and would not clear
   the current LongMemEval leader.
+- `uv run memorybench export --benchmark amb_personamem_32k --limit 3 --out results\amb_personamem_export_smoke.jsonl`
+  validated the PersonaMem 32k loader with one scenario and three query turns.
+- `uv run memorybench run --benchmarks amb_personamem_32k --adapter mapu --solver gemini --solver-model gemini-3.1-flash-lite --judge gemini --judge-model gemini-3.1-flash-lite --limit 1 --max-turns-per-scenario 1 --concurrency 1 --out results\amb_personamem_mapu_exact_smoke_20260518.json`
+  scored 1 / 1 exact and semantic with 0 errors.
+- `uv run memorybench run --benchmarks amb_personamem_32k --adapter mapu --solver gemini --solver-model gemini-3.1-flash-lite --judge gemini --judge-model gemini-3.1-flash-lite --limit 3 --max-turns-per-scenario 3 --concurrency 1 --out results\amb_personamem_mapu_limit3_default_restored_20260518.json`
+  scored 1 / 3 exact and semantic with 0 errors on a three-query smoke.
+
+Implementation notes:
+
+- `amb_personamem_32k` downloads and caches the AMB PersonaMem 32k documents and
+  queries from the official GitHub repository.
+- Limited debug runs scope ingested memory documents to the selected query users
+  to avoid ingesting the full 195-document split for a one-query smoke. Full
+  runs still cover all selected users.
+- The MapU adapter supports a generic `memory_documents` seed contract and
+  ingests each source document separately instead of truncating all documents
+  into one JSON seed.
+- MCQ exact scoring now treats aliases like `c` and `(c)` as equivalent when
+  expected answers are scalar alias lists.
+- A lexical MCQ selector was tried and gated behind
+  `MEMORYBENCH_ENABLE_MCQ_SELECTOR=1` because it fixed one AMB option-selection
+  miss but regressed two others. It is not default.
 
 Interpretation:
 
 - The active goal's `90 without losing efficiency` requirement must be read as
   accuracy plus retrieval/context budget, not just pass rate.
-- The next AMB integration should implement MapU as a provider or add a dataset
-  loader for at least LongMemEval/PersonaMem. Do not claim AMB performance until
-  MapU has an actual run report.
+- The next AMB integration should move from smoke slices to a stable
+  PersonaMem category run, then implement a provider-compatible full AMB run.
+  Do not claim leaderboard AMB performance from one-query or three-query smoke
+  slices.
 
 ## Full official AMA-Bench result
 
