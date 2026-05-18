@@ -162,6 +162,10 @@ class OpenAICompatibleSolver:
                 memory_response,
             ),
             "response_instruction": _response_instruction(request.turn.prompt),
+            "answer_shape_hint": _answer_shape_hint(
+                request.turn.prompt,
+                memory_response,
+            ),
         }
         if memory_plan:
             solver_input["memory_plan"] = memory_plan
@@ -2122,6 +2126,55 @@ def _response_instruction(prompt: str) -> str:
     if "json" in prompt_l:
         return "Return the requested JSON-compatible value directly."
     return "Return the final answer directly and concisely."
+
+
+def _answer_shape_hint(
+    prompt: str,
+    memory_response: AdapterResponse,
+) -> str:
+    prompt_l = prompt.lower()
+    state_update_language = any(
+        phrase in prompt_l
+        for phrase in (
+            "same as",
+            "same place as",
+            "same one as",
+            "like to join",
+            "want to join",
+            "joining them",
+            "joining the",
+            "continue with",
+            "keep the same",
+            "inherit",
+            "use the same",
+        )
+    )
+    if not state_update_language:
+        return ""
+    sidecar = _sidecar(memory_response)
+    typed_seed = sidecar.get("typed_seed_index")
+    typed_environment = sidecar.get("typed_environment_index")
+    has_records = False
+    for typed in (typed_environment, typed_seed):
+        if not isinstance(typed, dict):
+            continue
+        records = typed.get("records")
+        if isinstance(records, list) and records:
+            has_records = True
+            break
+    feedback = sidecar.get("environment_feedback")
+    has_structured_feedback = any(
+        isinstance(item, dict)
+        and isinstance(item.get("observed_outcome"), (dict, list))
+        for item in feedback
+    ) if isinstance(feedback, list) else False
+    if not has_records and not has_structured_feedback:
+        return ""
+    return (
+        "This looks like an update/inheritance request over structured memory. "
+        "If the answer is a state object/list, return the complete updated "
+        "state in that same structure, not only the inherited or changed field."
+    )
 
 
 def _compact_memory_response(
