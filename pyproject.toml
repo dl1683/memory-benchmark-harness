@@ -1,0 +1,41 @@
+[project]
+name = "memory-benchmark-harness"
+version = "0.1.0"
+description = "Reusable harness for evaluating agent memory systems across public memory benchmarks"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+datasets = [
+  "datasets>=4.4,<5",
+]
+mapu = [
+  "httpx>=0.27,<1",
+]
+all = [
+  "datasets>=4.4,<5",
+  "httpx>=0.27,<1",
+]
+dev = [
+  "pytest>=9,<10",
+  "pytest-asyncio>=1.3,<2",
+]
+
+[project.scripts]
+memorybench = "memory_bench_harness.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.28,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memory_bench_harness"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
