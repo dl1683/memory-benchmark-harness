@@ -54,6 +54,9 @@ def load_amb_personamem_32k(limit: int = 0, offset: int = 0) -> list[Scenario]:
                     "amb_question_type": meta.get("question_type"),
                     "amb_topic": meta.get("topic"),
                     "amb_retrieval_query": meta.get("retrieval_query"),
+                    "question_type": meta.get("question_type"),
+                    "topic": meta.get("topic"),
+                    "retrieval_query": meta.get("retrieval_query"),
                 },
             )
         )
