@@ -23,6 +23,7 @@ class MapUAdapter:
         timeout: float = 60.0,
         max_results: int = 20,
         max_seed_chars: int = 500_000,
+        observe_environment_feedback: bool = False,
     ) -> None:
         try:
             import httpx
@@ -37,6 +38,7 @@ class MapUAdapter:
         self.run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         self.max_results = max_results
         self.max_seed_chars = max_seed_chars
+        self.observe_environment_feedback = observe_environment_feedback
         headers: dict[str, str] = {}
         if api_key:
             headers["x-api-key"] = api_key
@@ -44,6 +46,7 @@ class MapUAdapter:
         self._corpus_by_key: dict[str, uuid.UUID] = {}
         self._seed_written: set[str] = set()
         self._trajectory_steps_by_key: dict[str, dict[int, dict[str, Any]]] = {}
+        self._environment_feedback_by_key: dict[str, list[dict[str, Any]]] = {}
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -219,7 +222,7 @@ class MapUAdapter:
         )
 
     def _render_observation(self, request: ObservationRequest) -> str:
-        return (
+        content = (
             "# Memory observed turn\n\n"
             f"suite: {request.benchmark}\n"
             f"config: {request.config or 'default'}\n"
@@ -232,6 +235,12 @@ class MapUAdapter:
             "Adapter prediction:\n"
             f"{json.dumps(request.prediction, ensure_ascii=True, sort_keys=True)}\n\n"
         )
+        if self.observe_environment_feedback:
+            content += (
+                "Environment feedback / observed outcome:\n"
+                f"{json.dumps(request.actual_answer, ensure_ascii=True, sort_keys=True)}\n\n"
+            )
+        return content
 
     def _prediction_from_query(self, query_result: dict[str, Any]) -> str:
         synthesis = query_result.get("synthesis")
@@ -332,6 +341,10 @@ class MapUAdapter:
             "keyword_matched_steps": keyword_steps,
             "event_index": self._event_index(index),
             "event_ledger": self._event_ledger(index),
+            "environment_feedback": [
+                dict(item)
+                for item in self._environment_feedback_by_key.get(scenario_key, [])
+            ],
         }
 
     def _event_ledger(self, index: dict[int, dict[str, Any]]) -> dict[str, Any]:
@@ -701,6 +714,16 @@ class MapUAdapter:
             document_type="memory_observation",
             independence_group=scenario_key,
         )
+        if self.observe_environment_feedback:
+            self._environment_feedback_by_key.setdefault(scenario_key, []).append(
+                {
+                    "turn_index": request.turn.turn_index,
+                    "prompt": request.turn.prompt[:1000],
+                    "prediction": request.prediction,
+                    "observed_outcome": request.actual_answer,
+                    "source": "post_turn_environment_feedback",
+                }
+            )
         try:
             await self._request(
                 "POST",

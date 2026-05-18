@@ -148,6 +148,9 @@ Validation slice:
 - `uv run memorybench run --benchmarks ama_bench --adapter mapu --mapu-base-url http://127.0.0.1:8000 --mapu-run-id event_ledger_gemini_judged_smoke_20260518 --solver gemini --solver-model gemini-3.1-flash-lite --solver-max-tokens 512 --judge gemini --judge-model gemini-3.1-flash-lite --judge-max-tokens 256 --offset 30 --limit 1 --max-turns-per-scenario 12 --concurrency 1 --out results\event_ledger_gemini_judged_smoke_20260518.json`
 - Result: 11 / 12 semantic correct, 0 errors, 91.67% semantic accuracy on one
   Embodied AI episode.
+- Regression check after adding opt-in environment feedback:
+  `results\event_ledger_post_feedback_regression_20260518.json`, 11 / 12
+  semantic correct, 0 errors.
 - The remaining miss is a general state-transition issue: container interaction
   summaries should distinguish actions mentioning an entity from actions that
   changed that entity's state.
@@ -155,6 +158,40 @@ Validation slice:
 This is not a new official score. It is evidence that the next architecture
 direction should be a provenance-backed state ledger with entity state-change
 semantics, not more benchmark prompt branches.
+
+## MemoryArena transfer status
+
+MemoryArena currently does not transfer well under the simplified harness.
+
+Evidence:
+
+- `results\memoryarena_mapu_gemini_smoke_20260518.json`: 5 / 30 semantic,
+  0 errors on five `bundled_shopping` scenarios.
+- `results\memoryarena_env_feedback_smoke_20260518.json`: 5 / 30 semantic,
+  0 errors after enabling post-turn environment feedback ingestion.
+- `results\memoryarena_typed_feedback_smoke_20260518.json`: 5 / 30 semantic,
+  0 errors after promoting environment feedback into typed sidecar records.
+- A rule-based compatibility selector was tried and rejected because it
+  regressed the same slice to 3 / 30.
+
+Current diagnosis:
+
+- `bundled_shopping` rows contain only `questions`, `answers`, and `category`;
+  they do not expose price/rating/product-catalog fields needed for fully
+  deterministic highest-price/highest-rating choices.
+- The run is therefore bottlenecked by option-selection and latent product
+  priors, not by basic memory transport alone.
+- The harness now has an explicit `--observe-environment-feedback` switch for
+  benchmarks that legitimately model a memory-agent-environment loop. It is off
+  by default and should stay off for AMA-Bench official runs.
+- Environment feedback sidecars are snapshotted immutably so report rows do not
+  show future feedback that was unavailable at answer time.
+
+Next safe direction:
+
+Build a general option/state solver that uses explicit catalog observations or
+post-action environment feedback when available. Do not add product-specific or
+MemoryArena-answer-specific rules.
 
 ## Reranked event subset experiment
 

@@ -77,6 +77,14 @@ def _parse_args() -> argparse.Namespace:
     run.add_argument("--mapu-max-results", type=int, default=20)
     run.add_argument("--mapu-max-seed-chars", type=int, default=500_000)
     run.add_argument(
+        "--observe-environment-feedback",
+        action="store_true",
+        help=(
+            "Persist post-turn environment feedback/observed outcomes for benchmarks "
+            "that explicitly model a memory-agent-environment loop. Off by default."
+        ),
+    )
+    run.add_argument(
         "--solver",
         choices=["none", "openai", "gemini", "ollama", "liquid"],
         default="none",
@@ -114,6 +122,7 @@ def _adapter_from_args(ns: argparse.Namespace) -> MemoryAdapter:
             run_id=ns.mapu_run_id or None,
             max_results=ns.mapu_max_results,
             max_seed_chars=ns.mapu_max_seed_chars,
+            observe_environment_feedback=ns.observe_environment_feedback,
         )
     elif ns.adapter == "oracle":
         adapter = OracleAdapter()

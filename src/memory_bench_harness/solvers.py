@@ -185,7 +185,10 @@ class OpenAICompatibleSolver:
                         "id, command, or quoted terms match the question. For causal "
                         "or strategy questions, ground the explanation in the specific "
                         "steps and observations rather than answering from general "
-                        "domain knowledge. Return strict JSON with one key "
+                        "domain knowledge. Return the final selected answer/value, "
+                        "not intermediate tool syntax such as search[...] or click[...] "
+                        "unless the question explicitly asks for the exact action, tool "
+                        "call, or command. Return strict JSON with one key "
                         "`prediction`; do not include extra explanation outside that "
                         "value."
                     ),
@@ -2125,6 +2128,7 @@ def _compact_memory_response(
         "mentioned_step_facts": [],
         "event_index": [],
         "event_ledger": {},
+        "environment_feedback": [],
         "derived_event_relations": [],
         "matched_transition": None,
     }
@@ -2141,6 +2145,8 @@ def _compact_memory_response(
             compact["derived_event_relations"] = _derived_event_relations(sidecar["event_index"])
         if isinstance(sidecar.get("event_ledger"), dict):
             compact["event_ledger"] = sidecar["event_ledger"]
+        if isinstance(sidecar.get("environment_feedback"), list):
+            compact["environment_feedback"] = sidecar["environment_feedback"][-12:]
         compact["matched_transition"] = sidecar.get("matched_observation_transition")
 
     query = retrieved.get("query")
