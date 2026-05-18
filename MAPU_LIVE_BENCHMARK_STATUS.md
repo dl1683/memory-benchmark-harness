@@ -9,6 +9,9 @@ Current policy: benchmark scores are regression signals for general memory quali
 - The MapU adapter exposes generic memory structures: seed context, observed turns, trajectory/event indexes, mentioned step facts, matched observations, retrieved evidence, and continuity metadata.
 - Observed-turn documents do not store current-turn ground truth answers.
 - Tests now assert that expected answers are redacted before adapter answer calls and that MapU observation documents do not contain ground-truth answer text.
+- The harness now tracks the live Agent Memory Benchmark result manifest via
+  `memorybench amb-manifest`, including accuracy, ingestion time, average
+  retrieval latency, and average context tokens.
 
 ## Last validation
 
@@ -51,6 +54,30 @@ Official leaderboard caveat:
 - The old `mapu_gemini_flash_lite_ama_full208_judged_restored_default_v1.json` artifact predates this metadata and correctly fails official export.
 - Current verified online leaderboard bars, computed from the Hugging Face leaderboard data on 2026-05-18: top memory-agent entry is `AMA-agent` at 55.79%; top model entry is `gpt 5.2` at 69.83%.
 - Latest full official-protocol MapU run cleared the memory-agent leaderboard but not the model-only leaderboard. Do not claim top model-board performance unless a future run clears 69.83%.
+
+## Agent Memory Benchmark tracking
+
+AMB is not yet runnable through the MapU adapter, but its live result manifest
+is now tracked so we can compare both accuracy and efficiency targets before
+attempting provider integration.
+
+Validation:
+
+- `uv run memorybench amb-manifest --dataset longmemeval --top 3 --compare-score 0.90`
+  fetched the live manifest from
+  `https://raw.githubusercontent.com/vectorize-io/agent-memory-benchmark/main/results-manifest.json`.
+- Current LongMemEval leader in that manifest: `hindsight`, 0.946 accuracy,
+  500 queries, 700.0 ms average retrieval, 43,624.5 average context tokens.
+- A 0.90 score would rank second on that filtered manifest and would not clear
+  the current LongMemEval leader.
+
+Interpretation:
+
+- The active goal's `90 without losing efficiency` requirement must be read as
+  accuracy plus retrieval/context budget, not just pass rate.
+- The next AMB integration should implement MapU as a provider or add a dataset
+  loader for at least LongMemEval/PersonaMem. Do not claim AMB performance until
+  MapU has an actual run report.
 
 ## Full official AMA-Bench result
 
