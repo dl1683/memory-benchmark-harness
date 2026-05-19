@@ -89,6 +89,17 @@ Validation:
   2 / 3 exact and semantic with 0 errors after exposing generic `topic`,
   `question_type`, and `retrieval_query` metadata aliases and instructing the
   solver to treat them as non-answer task context.
+- The original `results\amb_personamem_mapu_limit10_baseline_20260518.json`
+  scored 5 / 10, but that run used the first AMB loader shape where selected
+  queries were grouped as sequential turns in one scenario. That polluted later
+  queries with previous query prompts/options as observations and is now treated
+  as a flawed baseline.
+- `results\amb_personamem_mapu_limit10_independent_20260518.json` scored
+  6 / 10 exact and semantic with 0 errors after fixing the loader so each AMB
+  query is an independent one-turn scenario over source documents only.
+- `results\amb_personamem_latency_schema_smoke.json` validated that reports now
+  include latency summaries (`avg_ms`, `p50_ms`, `p95_ms`, `max_ms`) in
+  `summary.latency`.
 
 Implementation notes:
 
@@ -113,6 +124,11 @@ Implementation notes:
   persona blocks and preference/goal sentences. These summaries are passed as
   stable profile/preference evidence to the solver while keeping full source
   documents in MapU.
+- AMB PersonaMem queries are now isolated as independent one-turn scenarios.
+  This prevents retrieval contamination from previous query prompts/options and
+  better matches the benchmark's static document/query setup.
+- Harness reports now include latency summaries so accuracy changes can be
+  judged against efficiency instead of pass rate alone.
 - A lexical MCQ selector was tried and gated behind
   `MEMORYBENCH_ENABLE_MCQ_SELECTOR=1` because it fixed one AMB option-selection
   miss but regressed two others. It is not default.
