@@ -33,43 +33,15 @@ def load_amb_personamem_32k(limit: int = 0, offset: int = 0) -> list[Scenario]:
     selected_queries = queries[max(offset, 0):]
     if limit > 0:
         selected_queries = selected_queries[:limit]
-    selected_user_ids = {
-        str(row.get("user_id"))
-        for row in selected_queries
-        if isinstance(row, dict) and row.get("user_id")
-    }
-    turns: list[Turn] = []
-    for idx, row in enumerate(selected_queries):
-        if not isinstance(row, dict):
-            continue
-        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
-        turns.append(
-            Turn(
-                turn_index=idx,
-                prompt=str(row.get("query") or ""),
-                expected_answer=row.get("gold_answers") or [],
-                metadata={
-                    "amb_query_id": row.get("id"),
-                    "amb_user_id": row.get("user_id"),
-                    "amb_question_type": meta.get("question_type"),
-                    "amb_topic": meta.get("topic"),
-                    "amb_retrieval_query": meta.get("retrieval_query"),
-                    "question_type": meta.get("question_type"),
-                    "topic": meta.get("topic"),
-                    "retrieval_query": meta.get("retrieval_query"),
-                },
-            )
-        )
 
-    if not turns:
-        return []
-    memory_documents = []
+    docs_by_user: dict[str, list[dict[str, Any]]] = {}
     for row in documents:
         if not isinstance(row, dict):
             continue
-        if selected_user_ids and str(row.get("user_id")) not in selected_user_ids:
+        user_id = str(row.get("user_id") or "")
+        if not user_id:
             continue
-        memory_documents.append(
+        docs_by_user.setdefault(user_id, []).append(
             {
                 "id": row.get("id"),
                 "content": row.get("content") or "",
@@ -80,24 +52,48 @@ def load_amb_personamem_32k(limit: int = 0, offset: int = 0) -> list[Scenario]:
             }
         )
 
-    return [
-        Scenario(
-            benchmark="amb_personamem_32k",
-            config="personamem:32k",
-            scenario_id=f"personamem_32k_offset{max(offset, 0)}_limit{limit or 'all'}",
-            category="personamem",
-            seed_context={
-                "benchmark": "agent-memory-benchmark",
-                "dataset": "personamem",
-                "split": "32k",
-                "memory_documents": memory_documents,
-                "document_count": len(memory_documents),
-            },
-            sessions=turns,
+    scenarios: list[Scenario] = []
+    for idx, row in enumerate(selected_queries):
+        if not isinstance(row, dict):
+            continue
+        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+        user_id = str(row.get("user_id") or "")
+        query_id = str(row.get("id") or f"query_{max(offset, 0) + idx}")
+        memory_documents = docs_by_user.get(user_id, [])
+        turn = Turn(
+            turn_index=0,
+            prompt=str(row.get("query") or ""),
+            expected_answer=row.get("gold_answers") or [],
             metadata={
-                "source": "https://github.com/vectorize-io/agent-memory-benchmark",
-                "query_count": len(turns),
-                "document_count": len(memory_documents),
+                "amb_query_id": row.get("id"),
+                "amb_user_id": row.get("user_id"),
+                "amb_question_type": meta.get("question_type"),
+                "amb_topic": meta.get("topic"),
+                "amb_retrieval_query": meta.get("retrieval_query"),
+                "question_type": meta.get("question_type"),
+                "topic": meta.get("topic"),
+                "retrieval_query": meta.get("retrieval_query"),
             },
         )
-    ]
+        scenarios.append(
+            Scenario(
+                benchmark="amb_personamem_32k",
+                config="personamem:32k",
+                scenario_id=f"personamem_32k:{query_id}",
+                category="personamem",
+                seed_context={
+                    "benchmark": "agent-memory-benchmark",
+                    "dataset": "personamem",
+                    "split": "32k",
+                    "memory_documents": memory_documents,
+                    "document_count": len(memory_documents),
+                },
+                metadata={
+                    "source": "https://github.com/vectorize-io/agent-memory-benchmark",
+                    "query_count": 1,
+                    "document_count": len(memory_documents),
+                },
+                sessions=[turn],
+            )
+        )
+    return scenarios

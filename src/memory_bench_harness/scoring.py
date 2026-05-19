@@ -72,9 +72,34 @@ def summarize_results(results: list[TurnResult]) -> dict[str, Any]:
         "errors": errors,
         "exact_match": correct / max(evaluated, 1),
         "semantic_accuracy": semantic_correct / max(evaluated, 1),
+        "latency": summarize_latency(results),
         "scenario_metrics": summarize_scenarios(results),
         "by_benchmark": by_benchmark,
         "by_config": by_config,
+    }
+
+
+def summarize_latency(results: list[TurnResult]) -> dict[str, Any]:
+    latencies = sorted(
+        float(result.latency_ms)
+        for result in results
+        if result.error is None
+    )
+    if not latencies:
+        return {"avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0, "max_ms": 0.0}
+
+    def percentile(percent: float) -> float:
+        if len(latencies) == 1:
+            return latencies[0]
+        index = round((percent / 100) * (len(latencies) - 1))
+        index = min(len(latencies) - 1, max(0, index))
+        return latencies[index]
+
+    return {
+        "avg_ms": sum(latencies) / len(latencies),
+        "p50_ms": percentile(50),
+        "p95_ms": percentile(95),
+        "max_ms": latencies[-1],
     }
 
 
